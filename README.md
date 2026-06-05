@@ -38,7 +38,7 @@ Created on first launch at `~/.config/whisperkey/config.json`; edits hot-reload
 {
   "trigger": "capslock",          // capslock | f17 | f18 | f19 | <keycode#>
   "mode": "toggle",               // toggle | push_to_talk
-  "engine": "apple",              // apple | whisperkit (M8)
+  "engine": "apple",              // apple | whisperkit
   "language": "en",               // en, en-US, fr-FR, …
   "output": "paste",              // paste | type | clipboard
   "clipboardBehavior": "replace", // replace | append (output=clipboard)
@@ -48,30 +48,66 @@ Created on first launch at `~/.config/whisperkey/config.json`; edits hot-reload
 }
 ```
 
-## Build & run
+## Install (recommended)
 
 ```bash
-./make-app.sh            # builds .build + assembles WhisperKey.app (ad-hoc signed)
-./scripts/remap-capslock.sh   # one-time: Caps Lock -> F18 trigger
-open WhisperKey.app
+git clone https://github.com/OccupiedPorcupine/whisperkey.git
+cd whisperkey
+./install.sh
 ```
 
-A `mic` icon appears in the menu bar. On first launch, grant the prompts:
+`install.sh` creates a stable self-signed signing identity, builds the release
+app into `/Applications`, remaps Caps Lock → F18 (now and at every login), and
+registers a LaunchAgent so WhisperKey **auto-starts at login and runs in the
+background**.
 
-1. **Microphone** and **Speech Recognition** — pop up automatically.
-2. **Input Monitoring** and **Accessibility** — add `WhisperKey.app` manually
-   in **System Settings → Privacy & Security** (needed for the key trigger and
-   for typing into other apps). Relaunch after granting.
+On first launch grant four permissions (once):
 
-Then: focus any text field, **tap Caps Lock**, speak, **tap Caps Lock** again.
-The text is typed where your cursor is.
+1. **Microphone** and **Speech Recognition** — prompt automatically.
+2. **Input Monitoring** and **Accessibility** — add `/Applications/WhisperKey.app`
+   under **System Settings → Privacy & Security** (needed to read the trigger and
+   to paste into other apps). Quit + relaunch (or log out/in) after granting.
 
-> Tip: run from a terminal (`./WhisperKey.app/Contents/MacOS/WhisperKey`) to see
-> live partial transcripts and permission status in the logs.
+Then: focus any text field, **tap Caps Lock**, speak, **tap Caps Lock** again —
+the text is pasted at your cursor. Remove everything with `./uninstall.sh`.
+
+## Running as a background service
+
+WhisperKey runs as a **user LaunchAgent** — a true background process owned by
+`launchd` (parent PID 1, no controlling terminal). It survives closing every
+terminal, persists across logout, and relaunches at login. It is *not* tied to a
+shell; the only time a terminal is involved is the one-time `./install.sh` build.
+
+> It's a **LaunchAgent** (runs inside your logged-in GUI session) rather than a
+> system-wide **LaunchDaemon** (runs at boot, pre-login, headless). A dictation
+> tool *must* be an agent: it needs your GUI session to reach the mic, post
+> keystrokes, and show the menu-bar icon — a pre-login daemon couldn't.
+
+| Action | Command |
+|---|---|
+| Check if running | `pgrep -lf MacOS/WhisperKey` (or look for the 🎤 menu-bar icon) |
+| Stop | `launchctl unload ~/Library/LaunchAgents/com.munyau.whisperkey.plist` |
+| Start | `launchctl load ~/Library/LaunchAgents/com.munyau.whisperkey.plist` |
+| Restart | `pkill -f MacOS/WhisperKey` (the agent relaunches it) |
+| Logs | `tail -f ~/Library/Logs/WhisperKey.log` |
+| Quit this session | menu-bar icon → Quit (stays quit; a crash auto-restarts) |
+
+## Development
+
+```bash
+# fast local loop (unload the login agent first so it doesn't fight restart.sh):
+launchctl unload ~/Library/LaunchAgents/com.munyau.whisperkey.plist
+./restart.sh        # kill + rebuild + relaunch the local copy
+# push changes into the installed /Applications copy:
+./install.sh
+```
 
 ## Notes
 
-- Ad-hoc signing means permissions may reset across rebuilds. A stable signing
-  certificate (Xcode "Sign to Run Locally") fixes that once available.
-- Default trigger is F18; change `triggerKeyCode` in `KeyMonitor.swift` until the
-  config file (M7) lands.
+- Signing uses a **stable self-signed identity** (`scripts/make-cert.sh`), so the
+  Accessibility/Input-Monitoring grants persist across rebuilds and survive
+  moving the app to `/Applications` (the TCC rule is identity-based, not path- or
+  hash-based). It is not notarized, so Gatekeeper may ask you to right-click →
+  Open the first time if launched from Finder.
+- Trigger, mode, engine, output, language, and bubble options are all set in
+  `~/.config/whisperkey/config.json` (hot-reloaded — no restart).
