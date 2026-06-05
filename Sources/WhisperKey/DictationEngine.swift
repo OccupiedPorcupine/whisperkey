@@ -34,13 +34,15 @@ final class DictationEngine {
     }
 
     private func makeTranscriber() -> Transcriber {
-        // WhisperKit lands in M8; until then everything uses the Apple engine.
+        if config.engine == "whisperkit" {
+            let wk = WhisperKitTranscriber()
+            wk.modelName = config.whisperModel
+            wk.language = config.language
+            return wk
+        }
         let apple = AppleTranscriber()
         apple.localeIdentifier = config.localeIdentifier
         apple.addsPunctuation = config.punctuation
-        if config.engine == "whisperkit" {
-            NSLog("WhisperKey: engine 'whisperkit' not built yet — using Apple engine.")
-        }
         return apple
     }
 

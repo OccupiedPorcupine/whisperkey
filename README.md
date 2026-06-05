@@ -8,7 +8,7 @@ See [PLAN.md](PLAN.md) for the full design.
 
 ## Status
 
-Milestones 1–7 implemented:
+All milestones (1–9) implemented:
 
 - **Menu bar app** — `mic` icon, turns red while listening, Quit item.
 - **KeyMonitor** — `CGEventTap` on F18 (Caps Lock after remap), toggle + hold.
@@ -19,8 +19,15 @@ Milestones 1–7 implemented:
   terminals), `type` (per-char), or `clipboard`. Restores prior clipboard.
 - **BubbleWindow** — non-activating overlay with live transcript + level dot.
 - **ConfigStore** — hot-reloaded JSON at `~/.config/whisperkey/config.json`.
+- **WhisperKitTranscriber** — optional CoreML Whisper backend (batch, VAD-chunked).
+- **Installer** — `install.sh` / `uninstall.sh` with auto-start + remap LaunchAgents.
 
-Not yet built: WhisperKit engine (M8), installer/LaunchAgent (M9).
+### Using the WhisperKit engine
+Set `"engine": "whisperkit"` in the config (hot-reloads). On the next dictation
+the model downloads from Hugging Face on first use (cached afterward). It's a
+batch engine, so the bubble shows "Transcribing…" after you stop rather than live
+partials. Pick the model with `"whisperModel"` (e.g. `large-v3-turbo`, `base`,
+`small`). The Apple engine remains the default (instant, zero download).
 
 ## Config
 
