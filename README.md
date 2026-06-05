@@ -1,33 +1,49 @@
 # WhisperKey
 
-Global push-to-talk / toggle dictation for macOS. Tap a trigger key anywhere,
-speak, and the text is typed at your cursor (or dropped on the clipboard if no
-text field is focused). Menu-bar only, no Dock icon.
+**Global push-to-talk / toggle dictation for macOS.** Tap a key anywhere, speak,
+and your words are pasted at the cursor — in any app. Menu-bar only, no Dock
+icon, runs in the background, starts at login.
 
+Press **Caps Lock**, talk, press again — the transcription drops in where your
+cursor is (or onto the clipboard if nothing's focused). On-device by default,
+with an optional local Whisper engine for higher accuracy.
+
+![platform](https://img.shields.io/badge/platform-macOS%2014%2B-blue)
+![language](https://img.shields.io/badge/Swift-5-orange)
+![license](https://img.shields.io/badge/license-MIT-green)
+
+## Features
+
+- 🎙️ **Global trigger** — Caps Lock (remapped to F18) works in every app; `toggle` or `push_to_talk`.
+- ⌨️ **Pastes anywhere** — synthesized ⌘V, so it works where fake-typing fails (Claude Code, Electron apps, terminals). Falls back to clipboard when no field is focused, and restores your previous clipboard.
+- 🧠 **Two engines** — Apple on-device Speech (instant, zero setup) or local **WhisperKit** CoreML Whisper (higher accuracy). Swap via config.
+- ♾️ **Long-form safe** — an accumulating-pool transcriber banks every pause, so nothing is lost during long dictation.
+- 🫧 **Live overlay** — a non-activating bubble shows the transcript + mic level without ever stealing focus.
+- ⚙️ **Hot-reload config** — JSON at `~/.config/whisperkey/config.json`; no restart.
+- 🚀 **Background service** — auto-starts at login as a LaunchAgent; just a menu-bar mic icon.
+- 🔒 **Private** — everything runs on-device; nothing is sent to the cloud.
+
+## How it works
+
+`KeyMonitor` (a `CGEventTap` on F18) drives a `Recorder` (`AVAudioEngine` → 16 kHz
+mono), which feeds a `Transcriber` (Apple `Speech` or WhisperKit). The result goes
+to an `OutputRouter` that pastes it at the focused element (via the Accessibility
+API) or to the clipboard. A non-activating `NSPanel` shows the live transcript.
 See [PLAN.md](PLAN.md) for the full design.
 
-## Status
+## Requirements
 
-All milestones (1–9) implemented:
+- **macOS 14+** (Apple Silicon recommended)
+- **Xcode Command Line Tools** to build (`xcode-select --install`) — no full Xcode needed
 
-- **Menu bar app** — `mic` icon, turns red while listening, Quit item.
-- **KeyMonitor** — `CGEventTap` on F18 (Caps Lock after remap), toggle + hold.
-- **Recorder** — `AVAudioEngine` → 16 kHz mono Float32, with RMS levels.
-- **AppleTranscriber** — on-device Speech, punctuation, pause-based segment
-  rotation to dodge the ~1-minute request limit.
-- **OutputRouter** — `paste` (⌘V, universal — works in Claude Code/Electron/
-  terminals), `type` (per-char), or `clipboard`. Restores prior clipboard.
-- **BubbleWindow** — non-activating overlay with live transcript + level dot.
-- **ConfigStore** — hot-reloaded JSON at `~/.config/whisperkey/config.json`.
-- **WhisperKitTranscriber** — optional CoreML Whisper backend (batch, VAD-chunked).
-- **Installer** — `install.sh` / `uninstall.sh` with auto-start + remap LaunchAgents.
+## Engines
 
-### Using the WhisperKit engine
-Set `"engine": "whisperkit"` in the config (hot-reloads). On the next dictation
-the model downloads from Hugging Face on first use (cached afterward). It's a
-batch engine, so the bubble shows "Transcribing…" after you stop rather than live
-partials. Pick the model with `"whisperModel"` (e.g. `large-v3-turbo`, `base`,
-`small`). The Apple engine remains the default (instant, zero download).
+The default `apple` engine is on-device, instant, and needs no download. To use
+local Whisper, set `"engine": "whisperkit"` in the config (hot-reloads). On the
+next dictation the CoreML model downloads from Hugging Face once and is cached;
+it's a batch engine, so the bubble shows "Transcribing…" after you stop rather
+than live partials. Choose the model with `"whisperModel"` (e.g. `large-v3-turbo`,
+`base`, `small`).
 
 ## Config
 
@@ -111,3 +127,7 @@ launchctl unload ~/Library/LaunchAgents/com.munyau.whisperkey.plist
   Open the first time if launched from Finder.
 - Trigger, mode, engine, output, language, and bubble options are all set in
   `~/.config/whisperkey/config.json` (hot-reloaded — no restart).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
