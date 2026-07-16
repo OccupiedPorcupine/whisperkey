@@ -14,9 +14,12 @@ import Speech
 /// All mutable state is serialized on `q`; callbacks to the app go to main.
 final class AppleTranscriber: Transcriber {
     var onPartial: ((String) -> Void)?
+    var onCommit: ((String) -> Void)?
 
     var localeIdentifier = "en-US"
     var addsPunctuation = true
+    /// Custom dictionary: names/jargon the recognizer should bias toward.
+    var contextualStrings: [String] = []
 
     private lazy var recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier))
     private var request: SFSpeechAudioBufferRecognitionRequest?
@@ -26,6 +29,11 @@ final class AppleTranscriber: Transcriber {
     private var partial = ""       // current in-flight segment
     private var running = false
     private var finishCompletion: ((String) -> Void)?
+
+    /// Identifies the live segment. Each rotation bumps it; callbacks from a
+    /// previous (now-dead) recognition task carry a stale id and are ignored, so
+    /// a late result/error can't clobber the new segment's in-flight words.
+    private var generation = 0
 
     private var segmentStart = Date()
     private var silenceStart: Date?
@@ -56,6 +64,7 @@ final class AppleTranscriber: Transcriber {
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         req.addsPunctuation = addsPunctuation
+        if !contextualStrings.isEmpty { req.contextualStrings = contextualStrings }
         if recognizer.supportsOnDeviceRecognition {
             req.requiresOnDeviceRecognition = true
         }
@@ -64,13 +73,17 @@ final class AppleTranscriber: Transcriber {
         segmentStart = Date()
         silenceStart = nil
 
+        generation &+= 1
+        let gen = generation
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
-            self?.q.async { self?.handle(result: result, error: error) }
+            self?.q.async { self?.handle(result: result, error: error, gen: gen) }
         }
     }
 
     // On q.
-    private func handle(result: SFSpeechRecognitionResult?, error: Error?) {
+    private func handle(result: SFSpeechRecognitionResult?, error: Error?, gen: Int) {
+        // Drop callbacks from a rotated-out task — they belong to a dead segment.
+        guard gen == generation else { return }
         if let result {
             partial = result.bestTranscription.formattedString
             emit()
@@ -99,7 +112,15 @@ final class AppleTranscriber: Transcriber {
         }
         partial = ""
         request = nil
+        task?.cancel()   // stop the rotated-out task from emitting stale callbacks
         task = nil
+        // Checkpoint the banked transcript while still recording, so it's safely
+        // backed up before we start a fresh segment (the final roll at finish is
+        // delivered separately).
+        if running, !accumulated.isEmpty {
+            let acc = accumulated
+            DispatchQueue.main.async { self.onCommit?(acc) }
+        }
     }
 
     private func emit() {

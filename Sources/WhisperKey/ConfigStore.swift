@@ -8,7 +8,8 @@ final class ConfigStore {
     var onChange: ((Config) -> Void)?
 
     private let dirURL: URL
-    private let fileURL: URL
+    /// Path to config.json — exposed so the menu's "Open Config File" works.
+    let fileURL: URL
     private var source: DispatchSourceFileSystemObject?
     private var dirFD: CInt = -1
 
@@ -36,6 +37,26 @@ final class ConfigStore {
         if let data = try? encoder.encode(Config()) {
             try? data.write(to: fileURL)
         }
+    }
+
+    /// Apply an in-app change: mutate the config, persist it to disk, and notify
+    /// listeners immediately. The file watcher will see its own write as a no-op
+    /// (the on-disk value already matches), so there's no double-apply.
+    func update(_ mutate: (inout Config) -> Void) {
+        var cfg = config
+        mutate(&cfg)
+        guard cfg != config else { return }
+        config = cfg
+        persist(cfg)
+        DispatchQueue.main.async { self.onChange?(cfg) }
+    }
+
+    private func persist(_ cfg: Config) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(cfg) else { return }
+        do { try data.write(to: fileURL) }
+        catch { NSLog("WhisperKey: failed to write config.json — %@", String(describing: error)) }
     }
 
     private func reload() {

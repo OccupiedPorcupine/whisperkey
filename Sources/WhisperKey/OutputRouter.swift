@@ -39,7 +39,14 @@ final class OutputRouter {
 
         switch strategy {
         case .paste:
-            pasteText(trimmed)
+            // Always paste — AX focus detection is unreliable in Electron apps,
+            // terminals, and TUIs (Claude Code), so we can't gate ⌘V on it
+            // without breaking those. We only use focus detection to decide
+            // whether to restore the previous clipboard: if we're confident a
+            // field was focused, the paste landed and we restore politely. If
+            // not (no field, or an undetectable one), we leave the transcript
+            // on the clipboard so it's never lost.
+            pasteText(trimmed, restorePrevious: isTypeableElementFocused())
         case .type:
             if isTypeableElementFocused() {
                 typeText(trimmed)
@@ -50,6 +57,18 @@ final class OutputRouter {
         case .clipboard:
             break // handled above
         }
+    }
+
+    /// Write a running backup of the in-progress transcript to the clipboard so
+    /// spoken text is never lost if the recognizer resets mid-session. Pure
+    /// clipboard write — no paste, no restore. Intentionally overrides whatever
+    /// was on the clipboard (the user opted into this as a safety net).
+    func backup(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(trimmed, forType: .string)
     }
 
     // MARK: Focus detection
@@ -133,18 +152,26 @@ final class OutputRouter {
         return AXUIElementCopyAttributeValue(element, attr, &value) == .success
     }
 
+    /// Live-streaming path: type a freshly committed segment straight into
+    /// whatever has focus, with no clipboard involvement (a per-segment ⌘V
+    /// would thrash the user's clipboard many times a minute). No focus
+    /// gating either — in live mode the user has deliberately parked the
+    /// cursor in the target box.
+    func typeLive(_ delta: String) {
+        guard !delta.isEmpty, AXIsProcessTrusted() else { return }
+        typeText(delta)
+    }
+
     // MARK: Output paths
 
     private func typeText(_ text: String) {
         let source = CGEventSource(stateID: .combinedSessionState)
-        let units = Array(text.utf16)
         let chunkSize = 20
-        var index = 0
+        var chunk = [UInt16]()
+        chunk.reserveCapacity(chunkSize + 4)
 
-        while index < units.count {
-            let end = min(index + chunkSize, units.count)
-            var chunk = Array(units[index..<end])
-
+        func flush() {
+            guard !chunk.isEmpty else { return }
             if let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true) {
                 down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
                 down.post(tap: .cgSessionEventTap)
@@ -153,21 +180,35 @@ final class OutputRouter {
                 up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
                 up.post(tap: .cgSessionEventTap)
             }
-            index = end
+            chunk.removeAll(keepingCapacity: true)
         }
+
+        // Chunk on Character boundaries: splitting a surrogate pair (emoji) or a
+        // combining sequence across events would post half a code point and the
+        // target app would render garbage.
+        for character in text {
+            let units = Array(String(character).utf16)
+            if chunk.count + units.count > chunkSize { flush() }
+            chunk.append(contentsOf: units)
+        }
+        flush()
     }
 
     /// Universal insertion: stash text on the clipboard, synthesize ⌘V, then
-    /// restore the user's previous clipboard string.
-    private func pasteText(_ text: String) {
+    /// (optionally) restore the user's previous clipboard string.
+    ///
+    /// `restorePrevious` should only be true when we're confident the paste
+    /// landed in a focused field. When false we leave the transcript on the
+    /// clipboard so it survives for a manual paste.
+    private func pasteText(_ text: String, restorePrevious: Bool) {
         let pasteboard = NSPasteboard.general
-        let previous = pasteboard.string(forType: .string)
+        let previous = restorePrevious ? pasteboard.string(forType: .string) : nil
 
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
         postCommandV()
-        NSLog("WhisperKey: delivered via paste (⌘V).")
+        NSLog("WhisperKey: delivered via paste (⌘V), restore=%@.", restorePrevious ? "yes" : "no")
 
         // Paste is async; wait a beat before restoring the old clipboard so the
         // target app reads our text first.

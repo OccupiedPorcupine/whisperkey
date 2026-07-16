@@ -15,29 +15,39 @@ import WhisperKit
 /// status string instead. VAD chunking handles arbitrarily long recordings.
 final class WhisperKitTranscriber: Transcriber {
     var onPartial: ((String) -> Void)?
+    var onCommit: ((String) -> Void)?   // batch engine: no mid-session checkpoints
 
-    var modelName = "large-v3-turbo"
+    var modelName = "large-v3-v20240930_626MB"
     var language = "en"
 
     private var samples = [Float]()
     private let q = DispatchQueue(label: "whisperkey.whisperkit")
 
     /// Memoized, shared across sessions: first access triggers the model load,
-    /// later accesses await the same task.
+    /// later accesses await the same task. Re-created when the configured model
+    /// changes, so a config edit takes effect on the next dictation instead of
+    /// silently using the old model until relaunch.
     private static var pipeTask: Task<WhisperKit, Error>?
+    private static var pipeModel: String?
 
     private static func loadPipe(model: String) -> Task<WhisperKit, Error> {
-        if let task = pipeTask { return task }
+        if let task = pipeTask, pipeModel == model { return task }
         let task = Task { () -> WhisperKit in
             let config = WhisperKitConfig(model: model)
-            return try await WhisperKit(config)
+            let pipe = try await WhisperKit(config)
+            NSLog("WhisperKey: WhisperKit ready — CoreML Whisper '%@', fully on-device.", model)
+            return pipe
         }
         pipeTask = task
+        pipeModel = model
         return task
     }
 
     func start() throws {
-        q.sync { samples.removeAll(keepingCapacity: true) }
+        q.sync {
+            samples.removeAll(keepingCapacity: true)
+            samples.reserveCapacity(16_000 * 60)   // a minute up front — avoids mid-session reallocs
+        }
         DispatchQueue.main.async { self.onPartial?("Listening… (Whisper)") }
         // Warm up the model so it's ready by the time the user stops talking.
         Task { _ = try? await Self.loadPipe(model: modelName).value }
@@ -74,10 +84,16 @@ final class WhisperKitTranscriber: Transcriber {
                 let text = results.map { $0.text }
                     .joined(separator: " ")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                let seconds = Double(audio.count) / 16_000.0
+                NSLog("WhisperKey: WhisperKit transcribed %.1fs of audio on-device → %d chars (model %@).",
+                      seconds, text.count, model)
                 await MainActor.run { completion(text) }
             } catch {
                 NSLog("WhisperKey: WhisperKit transcribe failed — %@", String(describing: error))
-                await MainActor.run { completion("") }
+                await MainActor.run {
+                    self.onPartial?("Whisper failed — check the log")
+                    completion("")
+                }
             }
         }
     }

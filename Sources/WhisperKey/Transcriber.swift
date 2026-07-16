@@ -6,6 +6,11 @@ protocol Transcriber: AnyObject {
     /// Live, in-progress transcript (best guess so far). Called on the main queue.
     var onPartial: ((String) -> Void)? { get set }
 
+    /// Durable checkpoint: fired on the main queue whenever a segment is banked,
+    /// carrying the full transcript committed so far. Lets the engine persist a
+    /// running backup so spoken text survives a recognizer reset.
+    var onCommit: ((String) -> Void)? { get set }
+
     /// Begin a fresh transcription session.
     func start() throws
 

@@ -177,3 +177,75 @@ whisperkey/
 
 Steps 1–4 = working end-to-end dictation; 5–9 = fallback, UI, options, packaging.
 ```
+
+---
+
+## M9 — beyond Wispr Flow (2026-07)
+
+Wispr Flow's UX (hotkey → waveform pill → AI-cleaned paste, dictionary,
+history) rebuilt fully on-device, plus a TTS side it doesn't have:
+
+- **Bubble v2** — frosted `NSVisualEffectView` pill, scrolling 16-bar live
+  waveform (`WaveformView`, CALayer @30 fps), color-coded states
+  (listening/transcribing/polishing/speaking), fade+rise animation, and a
+  swallowed **Esc** that cancels dictation or stops speech (`KeyMonitor.interceptEscape`).
+- **STT engines** — third engine: NVIDIA **Parakeet** TDT 0.6B via FluidAudio
+  (CoreML on the ANE); `EngineCatalog` drives the menu, badge, and factory.
+- **TTS (`Speaker`)** — "Caps Lock + S" chord speaks the current selection
+  (AX `kAXSelectedTextAttribute`, ⌘C-borrow fallback). Engines: Apple
+  `AVSpeechSynthesizer` or **PocketTTS** (FluidAudio, local neural CoreML →
+  WAV → `AVAudioPlayer`). Chord again / Esc stops.
+- **Chords** — `KeyMonitor` generalized to a chord *set*; M = meeting
+  hand-off, S = speak selection, both configurable.
+- **History (`HistoryStore`)** — recent transcripts persisted to
+  `~/.config/whisperkey/history.json`, surfaced as a menu submenu
+  (click = copy, ⌥-click = speak).
+- **Dictionary** — `config.dictionary` biases Apple Speech
+  (`contextualStrings`) and the LLM polish prompt.
+- **Menu v2** — engine/mode/voice pickers, polish toggle, speak-selection,
+  recent dictations, open-config.
+
+---
+
+## M10 — Obsidian archive, notch UI, hardening (2026-07)
+
+- **Obsidian dictation archive** — opt-in (`obsidianLogging`, menu toggle
+  "Log Dictations → Obsidian"): every finalized dictation is also written as
+  its own vault note in `obsidianLogFolder`. Filename from
+  `obsidianNoteNameFormat` (`DateFormatter` patterns + a `{title}` placeholder
+  the on-device LLM fills; `TranscriptPolisher.title(for:)`, falls back to the
+  opening words). Note body: YAML frontmatter (created, source, the frontmost
+  app the text was delivered into, `dictation` tag), H1 title, transcript, and
+  a `[[YYYY-MM-DD]]` daily-note wikilink for backlinks/graph. Runs after
+  delivery (`DictationEngine.archiveToObsidian`), so pasting is never delayed.
+- **Notch overlay** (`bubblePosition: "notch"`, the default) — the dictation
+  UI mimics the MacBook notch expanding *horizontally*: a pure-black slab,
+  exactly notch-height (measured via `NSScreen.safeAreaInsets.top` +
+  `auxiliaryTop{Left,Right}Area`), grows sideways out of the notch rect, then
+  a live waveform (left wing) and session uptime (right wing) fade in — the
+  center stays empty under the physical notch. Contracts back on stop. Square
+  top corners, 12 pt bottom radius, `.statusBar` level. Notchless/external
+  displays degrade to a compact top-center slab. `top-center`/`bottom-center`
+  keep the frosted pill (waveform + transcript + engine badge + esc hint).
+- **Config validation** (`ConfigValidator`) — unknown engine/mode/output/
+  ttsEngine/bubblePosition, negative history limit, missing `{title}`
+  placeholder, nonexistent vault path → surfaced as a "⚠️ Config issue(s)"
+  menu item with per-problem sub-entries; hidden while the config is clean.
+- **Test target** (`Tests/WhisperKeyTests`) — config decode tolerance,
+  keycode mapping, filename templating/sanitization, note-body composition,
+  validator rules. Needs `DEVELOPER_DIR=<Xcode>` because the CLT toolchain
+  has no XCTest.
+- **Bug fixes from the hardening pass**
+  - Bubble hide/show race: a re-trigger during the 0.15 s fade-out left the
+    panel hidden mid-recording (hide-token cancellation).
+  - `OutputRouter.typeText` split UTF-16 surrogate pairs across chunk
+    boundaries → emoji/CJK garbage; now chunks on `Character` boundaries.
+  - Live transcription assigned `transcriber` after `recorder.start`, so the
+    audio thread could drop the session's opening buffers; failed starts also
+    left a stray header-only note (now removed).
+  - `WhisperKitTranscriber` memoized its pipeline forever — `whisperModel`
+    config edits were ignored until relaunch.
+  - Keycode 0 (letter A) collided with the "chord disabled" sentinel;
+    chord codes are now `CGKeyCode?`.
+  - `Recorder` RMS now vDSP (`vDSP_rmsqv`); batch engines pre-reserve 60 s of
+    sample capacity.
